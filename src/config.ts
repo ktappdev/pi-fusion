@@ -7,6 +7,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ConfigValidationResult, FusionConfig } from "./types.ts";
 
+export type { FusionConfig, ConfigValidationResult };
+
 export const DEFAULT_MAX_PANEL_MODELS = 3;
 export const DEFAULT_MAX_PANEL_OUTPUT_TOKENS = 2048;
 export const DEFAULT_MAX_COMPLETION_TOKENS = 4096;

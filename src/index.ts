@@ -22,8 +22,7 @@ import {
 } from "./config.ts";
 import { resolveFusionModels, runFusion } from "./fusion.ts";
 import { listAuthedModels, modelDisplay, resolveModelIdentifier } from "./models.ts";
-import { formatPreview } from "./format.ts";
-import { renderConfigStatus, selectPanelAndJudge } from "./ui.ts";
+import { renderConfigStatus, selectModelFromList, selectPanelAndJudge, showConfigSummary } from "./ui.ts";
 import type { FusionOptions } from "./types.ts";
 
 const FusionParams = Type.Object(
@@ -128,12 +127,12 @@ export default function (pi: ExtensionAPI) {
 		description: "Run multi-model fusion on a prompt",
 		handler: async (args, ctx) => {
 			const prompt = args.trim();
-			if (!prompt) {
-				ctx.ui.notify("Usage: /fusion <prompt>", "error");
-				return;
-			}
 
 			if (ctx.mode === "print") {
+				if (!prompt) {
+					console.log("Usage: /fusion <prompt>");
+					return;
+				}
 				const result = await runFusion(
 					ctx.cwd,
 					ctx.modelRegistry,
@@ -149,6 +148,46 @@ export default function (pi: ExtensionAPI) {
 
 			if (ctx.mode === "json" || ctx.mode === "rpc") {
 				ctx.ui.notify("Fusion command is only available in interactive and print modes", "error");
+				return;
+			}
+
+			if (!prompt) {
+				// No prompt provided: open panel selector, then ask for prompt.
+				const available = ctx.modelRegistry.getAvailable().filter((m) => m.input.includes("text"));
+				if (available.length === 0) {
+					ctx.ui.notify("No authed text models available.", "error");
+					return;
+				}
+
+				const sessionState = restoreSessionState(ctx);
+				const { panel, judge } = await resolveFusionModels(
+					ctx.cwd,
+					ctx.modelRegistry,
+					ctx.model,
+					ctx.isProjectTrusted(),
+					{},
+				);
+
+				const initialSelectedIds = sessionState?.selectedIds ?? new Set(panel.map(modelDisplay));
+				const initialJudgeId = sessionState?.judgeId ?? modelDisplay(judge);
+
+				const state = await selectPanelAndJudge(ctx, available, initialSelectedIds, initialJudgeId);
+				if (!state || state.selectedIds.size === 0) {
+					ctx.ui.notify("Panel selection cancelled", "info");
+					return;
+				}
+
+				persistSessionState(pi, state.selectedIds, state.judgeId);
+				updateStatus(ctx, state.selectedIds, state.judgeId);
+
+				// Now ask for the prompt via editor.
+				const promptText = await ctx.ui.editor("Fusion prompt:", "");
+				if (!promptText?.trim()) {
+					ctx.ui.notify("No prompt entered. Panel saved for this session.", "info");
+					return;
+				}
+
+				pi.sendUserMessage(`/fusion ${promptText.trim()}`);
 				return;
 			}
 
@@ -180,47 +219,45 @@ export default function (pi: ExtensionAPI) {
 			const { loadConfig } = await import("./config.ts");
 			const raw = loadConfig(ctx.cwd, ctx.isProjectTrusted());
 			const validation = validateConfig(raw);
-
-			const lines: string[] = [];
-			lines.push("## File Config");
-			lines.push(configDescription(validation.config));
-
 			const sessionState = restoreSessionState(ctx);
-			if (sessionState && sessionState.selectedIds.size > 0) {
-				lines.push("");
-				lines.push("## Session Selection (overrides file config for this session)");
-				lines.push(`Panel: ${Array.from(sessionState.selectedIds).join(", ")}`);
-				lines.push(`Judge: ${sessionState.judgeId ?? "(auto)"}`);
-			} else {
-				lines.push("");
-				lines.push("## Session Selection");
-				lines.push("No session selection. Use /fusion-panel to choose models interactively.");
-			}
-
-			if (validation.warnings.length > 0) {
-				lines.push("");
-				lines.push("## Warnings");
-				for (const w of validation.warnings) lines.push(`- ${w}`);
-			}
-			if (validation.errors.length > 0) {
-				lines.push("");
-				lines.push("## Errors");
-				for (const e of validation.errors) lines.push(`- ${e}`);
-			}
-
-			const text = lines.join("\n");
 
 			if (ctx.mode === "print") {
-				console.log(text);
+				const lines: string[] = [];
+				lines.push("## File Config");
+				lines.push(configDescription(validation.config));
+				if (sessionState?.selectedIds.size) {
+					lines.push("");
+					lines.push("## Session Selection");
+					lines.push(`Panel: ${Array.from(sessionState.selectedIds).join(", ")}`);
+					lines.push(`Judge: ${sessionState.judgeId ?? "auto"}`);
+				}
+				if (validation.warnings.length) {
+					lines.push("");
+					lines.push("## Warnings");
+					for (const w of validation.warnings) lines.push(`- ${w}`);
+				}
+				if (validation.errors.length) {
+					lines.push("");
+					lines.push("## Errors");
+					for (const e of validation.errors) lines.push(`- ${e}`);
+				}
+				console.log(lines.join("\n"));
 				return;
 			}
 
-			ctx.ui.notify(text, validation.errors.length > 0 ? "error" : validation.warnings.length > 0 ? "warning" : "info");
+			await showConfigSummary(
+				ctx,
+				validation.config,
+				validation.warnings,
+				validation.errors,
+				sessionState?.selectedIds.size ? Array.from(sessionState.selectedIds) : undefined,
+				sessionState?.judgeId,
+			);
 		},
 	});
 
 	pi.registerCommand("fusion-panel", {
-		description: "Preview or interactively select the fusion panel and judge",
+		description: "Interactively select the fusion panel and judge",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("fusion-panel requires interactive mode", "error");
@@ -233,7 +270,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Resolve current configuration to prefill the selector.
+			const sessionState = restoreSessionState(ctx);
 			const { panel, judge, warnings } = await resolveFusionModels(
 				ctx.cwd,
 				ctx.modelRegistry,
@@ -242,15 +279,10 @@ export default function (pi: ExtensionAPI) {
 				{},
 			);
 
-			const initialSelectedIds = new Set(panel.map(modelDisplay));
-			const initialJudgeId = modelDisplay(judge);
+			const initialSelectedIds = sessionState?.selectedIds ?? new Set(panel.map(modelDisplay));
+			const initialJudgeId = sessionState?.judgeId ?? modelDisplay(judge);
 
-			const state = await selectPanelAndJudge(
-				ctx,
-				available,
-				initialSelectedIds,
-				initialJudgeId,
-			);
+			const state = await selectPanelAndJudge(ctx, available, initialSelectedIds, initialJudgeId);
 
 			if (!state) {
 				ctx.ui.notify("Panel selection cancelled", "info");
@@ -263,25 +295,17 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			persistSessionState(pi, state.selectedIds, state.judgeId);
+			updateStatus(ctx, state.selectedIds, state.judgeId);
 
-			const selectedModels = Array.from(state.selectedIds)
-				.map((id) => resolveModelIdentifier(ctx.modelRegistry, id))
-				.filter((m): m is NonNullable<typeof m> => m !== undefined);
-			const judgeModel = state.judgeId ? resolveModelIdentifier(ctx.modelRegistry, state.judgeId) : selectedModels[0];
-
-			const preview = formatPreview(
-				selectedModels.map((m) => ({ provider: m.provider, id: m.id, name: m.name })),
-				{ provider: judgeModel!.provider, id: judgeModel!.id, name: judgeModel!.name },
-				warnings,
-			);
-			ctx.ui.setEditorText(preview);
-			ctx.ui.notify("Panel selection saved for this session. Use /fusion to run.", "info");
+			const panelNames = Array.from(state.selectedIds).join(", ");
+			const judgeName = state.judgeId ?? Array.from(state.selectedIds)[0];
+			ctx.ui.notify(`Panel: ${panelNames}\nJudge: ${judgeName}${warnings.length ? "\nWarnings: " + warnings.join("; ") : ""}`, "info");
 		},
 	});
 
 	pi.registerCommand("fusion-init", {
 		description: "Create a project-local .pi/fusion.json template",
-		handler: async (args, ctx) => {
+		handler: async (_args, ctx) => {
 			if (!ctx.isProjectTrusted()) {
 				ctx.ui.notify("Project is not trusted; cannot write project-local config", "error");
 				return;
@@ -290,29 +314,132 @@ export default function (pi: ExtensionAPI) {
 			const configPath = join(ctx.cwd, ".pi", "fusion.json");
 			const example = generateConfigExample();
 			writeFileSync(configPath, JSON.stringify(example, null, 2) + "\n", "utf8");
-			ctx.ui.notify(`Created ${configPath}`, "info");
+
+			if (ctx.hasUI) {
+				const openConfig = await ctx.ui.confirm(
+					"Created .pi/fusion.json",
+					`Wrote template to ${configPath}. Open it in the editor to customize?`,
+				);
+				if (openConfig) {
+					ctx.ui.setEditorText(JSON.stringify(example, null, 2));
+				}
+			} else {
+				ctx.ui.notify(`Created ${configPath}`, "info");
+			}
 		},
 	});
 
 	pi.registerCommand("fusion-models", {
-		description: "List authed models available for fusion panels",
+		description: "Browse authed models and add them to the fusion panel",
 		handler: async (_args, ctx) => {
-			const models = listAuthedModels(ctx.modelRegistry);
-			const lines = models.map((m) => `${m.selected ? "* " : "  "}${m.identifier} — ${m.name}`);
-			const text = lines.length > 0 ? lines.join("\n") : "No authed text models available.";
-			if (ctx.mode === "print") {
-				console.log(text);
+			if (!ctx.hasUI) {
+				ctx.ui.notify("fusion-models requires interactive mode", "error");
 				return;
 			}
-			ctx.ui.setEditorText(text);
-			ctx.ui.notify(`Listed ${models.length} authed text model(s)`, "info");
+
+			const available = ctx.modelRegistry.getAvailable().filter((m) => m.input.includes("text"));
+			if (available.length === 0) {
+				ctx.ui.notify("No authed text models available.", "error");
+				return;
+			}
+
+			const sessionState = restoreSessionState(ctx);
+			let selectedIds = sessionState?.selectedIds ?? new Set<string>();
+			let judgeId = sessionState?.judgeId;
+			let running = false;
+
+			while (true) {
+				const choice = await selectModelFromList(ctx, available, selectedIds, judgeId, !running);
+				if (!choice || !choice.identifier) {
+					if (selectedIds.size > 0) {
+						persistSessionState(pi, selectedIds, judgeId);
+						updateStatus(ctx, selectedIds, judgeId);
+						ctx.ui.notify(`Saved ${selectedIds.size} panel model(s). Judge: ${judgeId ?? "auto"}`, "info");
+					} else {
+						ctx.ui.notify("No models selected", "info");
+					}
+					return;
+				}
+
+				const id = choice.identifier;
+				if (choice.action === "panel") {
+					if (selectedIds.has(id)) {
+						selectedIds = new Set(Array.from(selectedIds).filter((x) => x !== id));
+						if (judgeId === id) judgeId = undefined;
+					} else {
+						if (selectedIds.size >= 8) {
+							ctx.ui.notify("Panel can have at most 8 models", "warning");
+							continue;
+						}
+						selectedIds = new Set([...selectedIds, id]);
+						if (!judgeId) judgeId = id;
+					}
+				} else if (choice.action === "judge") {
+					if (!selectedIds.has(id)) {
+						if (selectedIds.size >= 8) {
+							ctx.ui.notify("Panel is full. Add this model to the panel first.", "warning");
+							continue;
+						}
+						selectedIds = new Set([...selectedIds, id]);
+					}
+					judgeId = id;
+				} else if (choice.action === "run") {
+					if (!selectedIds.has(id)) {
+						if (selectedIds.size >= 8) {
+							ctx.ui.notify("Panel is full. Cannot add model.", "warning");
+							continue;
+						}
+						selectedIds = new Set([...selectedIds, id]);
+						if (!judgeId) judgeId = id;
+					}
+					persistSessionState(pi, selectedIds, judgeId);
+					updateStatus(ctx, selectedIds, judgeId);
+					running = true;
+					break;
+				}
+			}
+
+			if (running) {
+				const promptText = await ctx.ui.editor("Fusion prompt:", "");
+				if (!promptText?.trim()) {
+					ctx.ui.notify("No prompt entered. Panel saved for this session.", "info");
+					return;
+				}
+				pi.sendUserMessage(`/fusion ${promptText.trim()}`);
+			}
 		},
 	});
 
+	function updateStatus(
+		ctx: ExtensionContext,
+		selectedIds: Set<string>,
+		judgeId: string | undefined,
+	) {
+		const panel = Array.from(selectedIds);
+		if (panel.length === 0) {
+			ctx.ui.setStatus("fusion", undefined);
+			ctx.ui.setWidget("fusion-panel", undefined);
+			return;
+		}
+		const judge = judgeId && selectedIds.has(judgeId) ? judgeId : panel[0];
+		ctx.ui.setStatus("fusion", `${panel.length} panel model(s), judge: ${judge}`);
+		ctx.ui.setWidget("fusion-panel", [
+			`Panel: ${panel.join(", ")}`,
+			`Judge: ${judge}`,
+		]);
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		const state = restoreSessionState(ctx);
-		if (state) {
-			ctx.ui.setStatus("fusion", `fusion panel: ${state.selectedIds.size} models`);
+		if (state?.selectedIds.size) {
+			updateStatus(ctx, state.selectedIds, state.judgeId);
+		}
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		const state = restoreSessionState(ctx);
+		if (state?.selectedIds.size) {
+			updateStatus(ctx, state.selectedIds, state.judgeId);
 		}
 	});
 }
