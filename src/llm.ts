@@ -54,15 +54,17 @@ export async function callModelText(
 	return response;
 }
 
-function getSupportsTemperature(model: Model<Api>): boolean {
+export function getSupportsTemperature(model: Model<Api>): boolean {
 	const compat = (model as any).compat;
 	if (compat && typeof compat.supportsTemperature === "boolean") {
 		return compat.supportsTemperature;
 	}
-	// Heuristic: OpenAI Codex models and Anthropic Opus 4.7+ commonly reject temperature.
+	// Heuristic: OpenAI Codex models/providers and Anthropic Opus 4.7+ commonly reject temperature.
+	const provider = model.provider.toLowerCase();
 	const id = model.id.toLowerCase();
-	if (id.includes("codex")) return false;
-	if (model.provider === "anthropic" && /^claude-opus-4-[7-9]/.test(model.id)) return false;
+	const baseUrl = model.baseUrl.toLowerCase();
+	if (provider.includes("codex") || id.includes("codex") || baseUrl.includes("codex")) return false;
+	if (provider === "anthropic" && /^claude-opus-4-[7-9]/.test(model.id)) return false;
 	return true;
 }
 
