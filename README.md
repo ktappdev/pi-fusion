@@ -125,18 +125,18 @@ answers from multiple perspectives.
 Daily use is intentionally small:
 
 - `/fusion-setup` — choose panel and judge.
-- `/fusion` — toggle **forced Fusion mode** on/off for the current session.
+- `/fusion` — toggle between `available` and `forced` mode.
+- `/fusion off` — fully disable fusion for the session; model tool calls are blocked.
+- `/fusion available` — allow the active model to decide when fusion is useful.
+- `/fusion forced` — force every normal prompt through fusion.
 - `/fusion <prompt>` — force Fusion for one prompt, then let the active pi model answer normally.
 - `/fusion-status` — show current mode, panel, and judge.
 
 Advanced/debug commands remain available:
 
 - `/fusion-report <prompt>` — run fusion directly and write the raw diagnostic panel/judge report into the editor.
-- `/fusion-run` — advanced alias: setup, enter prompt, then force fusion once.
 - `/fusion-config` — view file config + session selection in a native settings list.
-- `/fusion-models` — plain text list of authed models.
 - `/fusion-init` — generate `.pi/fusion.json` (confirms before overwriting).
-- `/fusion-clear` — clear the current session selection.
 
 `/fusion-setup` controls:
   - **Type** to search/filter models.
@@ -155,15 +155,21 @@ Configure once:
 /fusion-setup
 ```
 
-Turn session mode on/off:
+Set session mode:
 
 ```
-/fusion
+/fusion available # model-decided use
+/fusion forced    # force every normal prompt through fusion
+/fusion off       # fully disable/block fusion
 ```
 
-When forced Fusion mode is on, normal prompts are automatically routed through the fusion tool before the active pi model answers.
+`/fusion` with no arguments toggles between `available` and `forced`.
 
-When forced Fusion mode is off, the `fusion` tool is still available. The active model may invoke it when the task genuinely benefits from multiple perspectives, critique, research, comparison, or expensive-to-be-wrong analysis.
+When mode is `forced`, normal prompts are automatically routed through the fusion tool before the active pi model answers.
+
+When mode is `available`, the `fusion` tool is available and the active model may invoke it when the task genuinely benefits from multiple perspectives, critique, research, comparison, or expensive-to-be-wrong analysis.
+
+When mode is `off`, fusion tool calls are blocked for the session.
 
 Force Fusion once without changing the toggle:
 
@@ -202,9 +208,9 @@ When prior conversation context matters, the model can either include the releva
 
 ## Session state
 
-`/fusion-setup` saves the selected panel and judge in the session. On `/resume`,
-the extension restores the last selection and shows it in the status line.
-Use `/fusion-clear` to remove it.
+`/fusion-setup` saves the selected panel and judge in the session. `/fusion` saves the current mode (`available`, `forced`, or `off`). On `/resume`, the extension restores the last selection and footer state.
+
+Use `/fusion off` to fully disable/block fusion for the session.
 
 ## Development
 
@@ -222,6 +228,6 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md]
 - Uses pi's authed models instead of OpenRouter's catalog.
 - Does not inject `openrouter:web_search` or `openrouter:web_fetch` into panel/judge calls (pi has its own tools; the outer model can still use them).
 - No recursion-depth header is needed because inner calls use `complete()` directly and never see the `fusion` tool.
-- Adds interactive panel/judge selection via `/fusion-setup` and `/fusion-run`.
-- Adds `/fusion-clear` to reset session selection.
-- Adds config validation, preview commands, and session-state persistence.
+- Adds interactive panel/judge selection via `/fusion-setup`.
+- Adds session modes: `available`, `forced`, and `off`.
+- Adds config validation, diagnostic reports, and session-state persistence.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- Added explicit three-state session mode: `available`, `forced`, and `off`.
+- `/fusion off` now fully disables fusion for the session and blocks `fusion` tool calls.
+- `/fusion available` re-enables model-decided fusion use.
+- `/fusion forced` forces every normal prompt through fusion.
+- `/fusion` with no args toggles between `available` and `forced`.
+- Removed legacy commands: `/fusion-run`, `/fusion-models`, and `/fusion-clear`.
+- Footer/status now reflects `Fusion available`, `Fusion forced`, or `Fusion off`.
+
 ## 0.4.0
 
 - Added optional recent conversation context for fusion tool calls.

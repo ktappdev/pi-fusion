@@ -163,23 +163,3 @@ export async function resolvePanelAndJudge(
 	return { panel, judge, warnings };
 }
 
-export interface AuthedModelInfo {
-	identifier: string;
-	provider: string;
-	id: string;
-	name: string;
-	selected: boolean;
-}
-
-export function listAuthedModels(registry: ModelRegistry, selectedIds?: Set<string>): AuthedModelInfo[] {
-	const available = registry.getAvailable().filter((m) => m.input.includes("text"));
-	return available
-		.map((m) => ({
-			identifier: modelDisplay(m),
-			provider: m.provider,
-			id: m.id,
-			name: m.name,
-			selected: selectedIds ? selectedIds.has(modelDisplay(m)) : false,
-		}))
-		.sort((a, b) => a.identifier.localeCompare(b.identifier));
-}

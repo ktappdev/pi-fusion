@@ -23,8 +23,8 @@ import {
 } from "./config.ts";
 import { buildRecentContextFromEntries, type FusionContextMode, normalizeContextTurns } from "./context.ts";
 import { resolveFusionModels, runFusion } from "./fusion.ts";
-import { listAuthedModels, modelDisplay } from "./models.ts";
-import { selectFusionSetup, showConfigSummary, type FusionSetupState } from "./ui.ts";
+import { modelDisplay } from "./models.ts";
+import { selectFusionSetup, showConfigSummary, type FusionMode, type FusionSetupState } from "./ui.ts";
 import { formatResult } from "./format.ts";
 import type { FusionOptions } from "./types.ts";
 const FusionParams = Type.Object(
@@ -119,11 +119,22 @@ function alignLine(left: string, right: string, width: number): string {
 	return truncateToWidth(right, width, "");
 }
 
-function fusionFooterText(selectedIds: Set<string>, judgeId: string | undefined, enabled = false): string | undefined {
-	if (selectedIds.size === 0) return undefined;
+function normalizeMode(state: { enabled?: boolean; mode?: FusionMode } | undefined): FusionMode {
+	if (state?.mode) return state.mode;
+	return state?.enabled ? "forced" : "available";
+}
+
+function modeLabel(mode: FusionMode): string {
+	if (mode === "forced") return "Fusion forced";
+	if (mode === "off") return "Fusion off";
+	return "Fusion available";
+}
+
+function fusionFooterText(selectedIds: Set<string>, judgeId: string | undefined, mode: FusionMode = "available"): string | undefined {
+	if (selectedIds.size === 0) return mode === "off" ? "Fusion off" : undefined;
 	const panel = Array.from(selectedIds);
 	const judge = judgeId && selectedIds.has(judgeId) ? judgeId : panel[0];
-	return `${enabled ? "Fusion forced" : "Fusion available"} • ${panel.length} panel • judge ${judge}`;
+	return `${modeLabel(mode)} • ${panel.length} panel • judge ${judge}`;
 }
 
 function installFusionFooter(
@@ -131,12 +142,12 @@ function installFusionFooter(
 	ctx: ExtensionContext,
 	selectedIds: Set<string>,
 	judgeId: string | undefined,
-	enabled = false,
+	mode: FusionMode = "available",
 ) {
 	ctx.ui.setStatus("fusion", undefined);
 	ctx.ui.setWidget("fusion-panel", undefined);
 
-	const fusionText = fusionFooterText(selectedIds, judgeId, enabled);
+	const fusionText = fusionFooterText(selectedIds, judgeId, mode);
 	if (!fusionText) {
 		ctx.ui.setFooter(undefined);
 		return;
@@ -212,16 +223,17 @@ function updateStatus(
 	ctx: ExtensionContext,
 	selectedIds: Set<string>,
 	judgeId: string | undefined,
-	enabled = false,
+	mode: FusionMode = "available",
 ) {
-	installFusionFooter(pi, ctx, selectedIds, judgeId, enabled);
+	installFusionFooter(pi, ctx, selectedIds, judgeId, mode);
 }
 
-function persistSessionState(pi: ExtensionAPI, selectedIds: Set<string>, judgeId: string | undefined, enabled = false) {
+function persistSessionState(pi: ExtensionAPI, selectedIds: Set<string>, judgeId: string | undefined, mode: FusionMode = "available") {
 	pi.appendEntry("fusion-state", {
 		selectedIds: Array.from(selectedIds),
 		judgeId,
-		enabled,
+		enabled: mode === "forced",
+		mode,
 		timestamp: Date.now(),
 	});
 }
@@ -231,11 +243,13 @@ function restoreSessionState(ctx: ExtensionContext): FusionSetupState | undefine
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry.type === "custom" && entry.customType === "fusion-state" && "data" in entry && entry.data) {
-			const data = entry.data as { selectedIds?: string[]; judgeId?: string; enabled?: boolean };
+			const data = entry.data as { selectedIds?: string[]; judgeId?: string; enabled?: boolean; mode?: FusionMode };
+			const mode = normalizeMode(data);
 			return {
 				selectedIds: new Set(data.selectedIds ?? []),
 				judgeId: data.judgeId,
-				enabled: data.enabled ?? false,
+				enabled: mode === "forced",
+				mode,
 			};
 		}
 	}
@@ -276,7 +290,8 @@ function buildInitialState(
 	return {
 		selectedIds: sessionState?.selectedIds ?? new Set(resolvedPanel.map((m) => m.display)),
 		judgeId: sessionState?.judgeId ?? resolvedJudge.display,
-		enabled: sessionState?.enabled ?? false,
+		enabled: normalizeMode(sessionState) === "forced",
+		mode: normalizeMode(sessionState),
 	};
 }
 
@@ -295,8 +310,9 @@ function applySetup(
 	if (!state.judgeId || !state.selectedIds.has(state.judgeId)) {
 		state.judgeId = Array.from(state.selectedIds)[0];
 	}
-	persistSessionState(pi, state.selectedIds, state.judgeId, state.enabled ?? false);
-	updateStatus(pi, ctx, state.selectedIds, state.judgeId, state.enabled ?? false);
+	const mode = normalizeMode(state);
+	persistSessionState(pi, state.selectedIds, state.judgeId, mode);
+	updateStatus(pi, ctx, state.selectedIds, state.judgeId, mode);
 	const panelNames = Array.from(state.selectedIds).join(", ");
 	ctx.ui.notify(
 		`Panel: ${panelNames}\nJudge: ${state.judgeId}${warnings.length ? "\nWarnings: " + warnings.join("; ") : ""}`,
@@ -325,6 +341,13 @@ export default function (pi: ExtensionAPI) {
 		],
 		parameters: FusionParams,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const sessionState = restoreSessionState(ctx);
+			if (normalizeMode(sessionState) === "off") {
+				return {
+					content: [{ type: "text", text: JSON.stringify({ status: "error", error: "fusion disabled" }, null, 2) }],
+					details: { status: "error", responses: [], error: "fusion disabled", failure_reason: "unexpected_error" },
+				};
+			}
 			const sessionOptions = sessionFusionOptions(ctx);
 			const contextMode = (params.context_mode ?? "none") as FusionContextMode;
 			const contextText = contextMode === "recent"
@@ -351,30 +374,49 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("fusion", {
-		description: "Toggle forced fusion mode, or force fusion for one prompt with /fusion <prompt>",
+		description: "Set fusion mode: /fusion toggles available/forced, /fusion off disables, /fusion <prompt> forces once",
 		handler: async (args, ctx) => {
 			const prompt = args.trim();
 			const sessionState = restoreSessionState(ctx);
+			const lower = prompt.toLowerCase();
+			const modeCommand: FusionMode | undefined =
+				lower === "off" || lower === "disable" || lower === "disabled"
+					? "off"
+					: lower === "available" || lower === "auto"
+						? "available"
+						: lower === "forced" || lower === "force" || lower === "on"
+							? "forced"
+							: undefined;
 
-			if (!prompt) {
-				if (!sessionState?.selectedIds.size) {
-					const message = "No fusion setup yet. Run /fusion-setup first.";
+			if (!prompt || modeCommand) {
+				if (!sessionState?.selectedIds.size && (modeCommand === "forced" || (!prompt && !modeCommand))) {
+					const message = "No fusion setup yet. Run /fusion-setup first, or use /fusion off to disable.";
 					if (ctx.mode === "print") console.log(message);
 					else ctx.ui.notify(message, "warning");
 					return;
 				}
 
-				const enabled = !(sessionState.enabled ?? false);
-				persistSessionState(pi, sessionState.selectedIds, sessionState.judgeId, enabled);
-				updateStatus(pi, ctx, sessionState.selectedIds, sessionState.judgeId, enabled);
-				const summary = fusionFooterText(sessionState.selectedIds, sessionState.judgeId, enabled) ?? "Fusion off";
+				const selectedIds = sessionState?.selectedIds ?? new Set<string>();
+				const judgeId = sessionState?.judgeId;
+				const currentMode = normalizeMode(sessionState);
+				const nextMode = modeCommand ?? (currentMode === "forced" ? "available" : "forced");
+				persistSessionState(pi, selectedIds, judgeId, nextMode);
+				updateStatus(pi, ctx, selectedIds, judgeId, nextMode);
+				const summary = fusionFooterText(selectedIds, judgeId, nextMode) ?? modeLabel(nextMode);
 				if (ctx.mode === "print") console.log(summary);
 				else ctx.ui.notify(summary, "info");
 				return;
 			}
 
+			if (normalizeMode(sessionState) === "off") {
+				const message = "Fusion is off. Use /fusion available or /fusion forced before using /fusion <prompt>.";
+				if (ctx.mode === "print") console.log(message);
+				else ctx.ui.notify(message, "warning");
+				return;
+			}
+
 			if (sessionState?.selectedIds.size) {
-				updateStatus(pi, ctx, sessionState.selectedIds, sessionState.judgeId, sessionState.enabled ?? false);
+				updateStatus(pi, ctx, sessionState.selectedIds, sessionState.judgeId, normalizeMode(sessionState));
 			}
 
 			if (ctx.mode === "print") {
@@ -398,7 +440,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const sessionState = restoreSessionState(ctx);
-			if (sessionState?.selectedIds.size) updateStatus(pi, ctx, sessionState.selectedIds, sessionState.judgeId, sessionState.enabled ?? false);
+			if (sessionState?.selectedIds.size) updateStatus(pi, ctx, sessionState.selectedIds, sessionState.judgeId, normalizeMode(sessionState));
 			const overrides = sessionFusionOptions(ctx);
 
 			ctx.ui.setWorkingMessage("Running fusion report...");
@@ -479,94 +521,6 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("fusion-run", {
-		description: "Advanced alias: setup, enter prompt, then force fusion once",
-		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("fusion-run requires interactive mode", "error");
-				return;
-			}
-
-			const available = ctx.modelRegistry.getAvailable().filter((m) => m.input.includes("text"));
-			if (available.length === 0) {
-				ctx.ui.notify("No authed text models available.", "error");
-				return;
-			}
-
-			const { panel, judge, warnings } = await resolveFusionModels(
-				ctx.cwd,
-				ctx.modelRegistry,
-				ctx.model,
-				ctx.isProjectTrusted(),
-				{},
-			);
-
-			const initial: FusionSetupState = buildInitialState(
-				ctx,
-				panel.map((m) => ({ display: modelDisplay(m) })),
-				{ display: modelDisplay(judge) },
-			);
-
-			const state = await selectFusionSetup(ctx, available, initial);
-			if (!state) {
-				ctx.ui.notify("Fusion run cancelled", "info");
-				return;
-			}
-
-			if (!applySetup(pi, ctx, state, warnings)) return;
-
-			const promptText = await ctx.ui.editor("Fusion prompt:", "");
-			if (!promptText?.trim()) {
-				ctx.ui.notify("No prompt entered. Setup saved for this session.", "info");
-				return;
-			}
-
-			pi.sendUserMessage(`/fusion ${promptText.trim()}`);
-		},
-	});
-
-	pi.registerCommand("fusion-config", {
-		description: "Validate and display the active fusion configuration",
-		handler: async (_args, ctx) => {
-			const { loadConfig } = await import("./config.ts");
-			const raw = loadConfig(ctx.cwd, ctx.isProjectTrusted());
-			const validation = validateConfig(raw);
-			const sessionState = restoreSessionState(ctx);
-
-			if (ctx.mode === "print") {
-				const lines: string[] = [];
-				lines.push("## File Config");
-				lines.push(configDescription(validation.config));
-				if (sessionState?.selectedIds.size) {
-					lines.push("");
-					lines.push("## Session Selection");
-					lines.push(`Panel: ${Array.from(sessionState.selectedIds).join(", ")}`);
-					lines.push(`Judge: ${sessionState.judgeId ?? "auto"}`);
-				}
-				if (validation.warnings.length) {
-					lines.push("");
-					lines.push("## Warnings");
-					for (const w of validation.warnings) lines.push(`- ${w}`);
-				}
-				if (validation.errors.length) {
-					lines.push("");
-					lines.push("## Errors");
-					for (const e of validation.errors) lines.push(`- ${e}`);
-				}
-				console.log(lines.join("\n"));
-				return;
-			}
-
-			await showConfigSummary(
-				ctx,
-				validation.config,
-				validation.warnings,
-				validation.errors,
-				sessionState?.selectedIds.size ? Array.from(sessionState.selectedIds) : undefined,
-				sessionState?.judgeId,
-			);
-		},
-	});
 
 	pi.registerCommand("fusion-init", {
 		description: "Create a project-local .pi/fusion.json template",
@@ -602,20 +556,6 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("fusion-models", {
-		description: "List authed models available for fusion panels",
-		handler: async (_args, ctx) => {
-			const models = listAuthedModels(ctx.modelRegistry);
-			const lines = models.map((m) => `${m.selected ? "* " : "  "}${m.identifier} — ${m.name}`);
-			const text = lines.length > 0 ? lines.join("\n") : "No authed text models available.";
-			if (ctx.mode === "print") {
-				console.log(text);
-				return;
-			}
-			ctx.ui.setEditorText(text);
-			ctx.ui.notify(`Listed ${models.length} authed text model(s)`, "info");
-		},
-	});
 
 	pi.registerCommand("fusion-status", {
 		description: "Show the current fusion mode, panel, and judge",
@@ -623,14 +563,15 @@ export default function (pi: ExtensionAPI) {
 			const state = restoreSessionState(ctx);
 			const lines: string[] = [];
 			if (!state?.selectedIds.size) {
-				lines.push("Fusion is not set up. Run /fusion-setup.");
+				lines.push(normalizeMode(state) === "off" ? "Fusion is off." : "Fusion is not set up. Run /fusion-setup.");
 			} else {
-				lines.push(`Mode: ${state.enabled ? "forced for every normal prompt" : "available when the active model decides it is useful"}`);
+				const mode = normalizeMode(state);
+				lines.push(`Mode: ${mode}`);
 				lines.push(`Panel: ${Array.from(state.selectedIds).join(", ")}`);
 				lines.push(`Judge: ${state.judgeId ?? Array.from(state.selectedIds)[0]}`);
 				lines.push("");
-				lines.push("Use /fusion to toggle forced mode, /fusion <prompt> to force once, /fusion-setup to change models.");
-				updateStatus(pi, ctx, state.selectedIds, state.judgeId, state.enabled ?? false);
+				lines.push("Use /fusion to toggle available/forced, /fusion off to disable, /fusion <prompt> to force once.");
+				updateStatus(pi, ctx, state.selectedIds, state.judgeId, mode);
 			}
 			const text = lines.join("\n");
 			if (ctx.mode === "print") console.log(text);
@@ -638,18 +579,12 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("fusion-clear", {
-		description: "Advanced: clear the current fusion panel selection",
-		handler: async (_args, ctx) => {
-			const ok = await ctx.ui.confirm("Clear fusion panel?", "Remove all selected panel models and judge?");
-			if (!ok) {
-				ctx.ui.notify("Cancelled", "info");
-				return;
-			}
-			persistSessionState(pi, new Set(), undefined, false);
-			updateStatus(pi, ctx, new Set(), undefined, false);
-			ctx.ui.notify("Fusion panel cleared", "info");
-		},
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "fusion") return;
+		const state = restoreSessionState(ctx);
+		if (normalizeMode(state) === "off") {
+			return { block: true, reason: "Fusion is off for this session. Use /fusion available or /fusion forced to re-enable it." };
+		}
 	});
 
 	pi.on("input", async (event, ctx) => {
@@ -657,29 +592,29 @@ export default function (pi: ExtensionAPI) {
 		if (event.text.trim().startsWith("/")) return { action: "continue" };
 		if (isFusionPrompt(event.text.trim())) return { action: "continue" };
 		const state = restoreSessionState(ctx);
-		if (!state?.enabled || !state.selectedIds.size) return { action: "continue" };
-		updateStatus(pi, ctx, state.selectedIds, state.judgeId, true);
+		if (normalizeMode(state) !== "forced" || !state?.selectedIds.size) return { action: "continue" };
+		updateStatus(pi, ctx, state.selectedIds, state.judgeId, "forced");
 		return { action: "transform", text: forceFusionPrompt(event.text), images: event.images };
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		const state = restoreSessionState(ctx);
-		if (state?.selectedIds.size) {
-			updateStatus(pi, ctx, state.selectedIds, state.judgeId, state.enabled ?? false);
+		if (state?.selectedIds.size || normalizeMode(state) === "off") {
+			updateStatus(pi, ctx, state?.selectedIds ?? new Set(), state?.judgeId, normalizeMode(state));
 		}
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		const state = restoreSessionState(ctx);
-		if (state?.selectedIds.size) {
-			updateStatus(pi, ctx, state.selectedIds, state.judgeId, state.enabled ?? false);
+		if (state?.selectedIds.size || normalizeMode(state) === "off") {
+			updateStatus(pi, ctx, state?.selectedIds ?? new Set(), state?.judgeId, normalizeMode(state));
 		}
 	});
 
 	pi.on("model_select", async (_event, ctx) => {
 		const state = restoreSessionState(ctx);
-		if (state?.selectedIds.size) {
-			updateStatus(pi, ctx, state.selectedIds, state.judgeId, state.enabled ?? false);
+		if (state?.selectedIds.size || normalizeMode(state) === "off") {
+			updateStatus(pi, ctx, state?.selectedIds ?? new Set(), state?.judgeId, normalizeMode(state));
 		}
 	});
 }

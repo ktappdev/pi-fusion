@@ -28,10 +28,14 @@ interface ModelInfo {
 	name: string;
 }
 
+export type FusionMode = "available" | "forced" | "off";
+
 export interface FusionSetupState {
 	selectedIds: Set<string>;
 	judgeId: string | undefined;
+	/** Legacy boolean: true => forced, false/undefined => available. */
 	enabled?: boolean;
+	mode?: FusionMode;
 }
 
 function toModelInfo(available: Model<Api>[]): ModelInfo[] {
