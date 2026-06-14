@@ -1,16 +1,63 @@
 /**
  * Interactive UI helpers for pi-fusion.
+ *
+ * Uses pi's built-in SelectList plus a search Input for model selection.
+ * Keys:
+ *   - type to search
+ *   - space toggles panel membership
+ *   - j sets the selected model as judge
+ *   - enter confirms
+ *   - esc cancels
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { Container, Key, type SelectItem, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
+import { DynamicBorder, getSelectListTheme } from "@earendil-works/pi-coding-agent";
+import { Container, Input, Key, matchesKey, Text, type SelectItem, SelectList } from "@earendil-works/pi-tui";
 import type { Api, Model } from "./types.ts";
 import { modelDisplay } from "./models.ts";
+
+interface ModelInfo {
+	id: string;
+	identifier: string;
+	provider: string;
+	name: string;
+}
 
 interface ModelSelectState {
 	selectedIds: Set<string>;
 	judgeId: string | undefined;
+}
+
+function makeItems(
+	models: ModelInfo[],
+	selectedIds: Set<string>,
+	judgeId: string | undefined,
+): SelectItem[] {
+	return models.map((m) => {
+		const isPanel = selectedIds.has(m.identifier);
+		const isJudge = judgeId === m.identifier;
+		let label = m.identifier;
+		const badges: string[] = [];
+		if (isPanel) badges.push("panel");
+		if (isJudge) badges.push("judge");
+		if (badges.length > 0) label += ` [${badges.join("+")}]`;
+		return {
+			value: m.identifier,
+			label,
+			description: `${m.provider} • ${m.name}`,
+		};
+	});
+}
+
+function filterModels(models: ModelInfo[], query: string): ModelInfo[] {
+	const trimmed = query.trim().toLowerCase();
+	if (!trimmed) return models;
+	return models.filter(
+		(m) =>
+			m.identifier.toLowerCase().includes(trimmed) ||
+			m.name.toLowerCase().includes(trimmed) ||
+			m.provider.toLowerCase().includes(trimmed),
+	);
 }
 
 export async function selectPanelAndJudge(
@@ -21,7 +68,13 @@ export async function selectPanelAndJudge(
 ): Promise<{ selectedIds: Set<string>; judgeId: string | undefined } | null> {
 	if (!ctx.hasUI) return null;
 
-	const identifiers = available.map(modelDisplay);
+	const models: ModelInfo[] = available.map((m) => ({
+		id: m.id,
+		identifier: modelDisplay(m),
+		provider: m.provider,
+		name: m.name,
+	}));
+
 	const state: ModelSelectState = {
 		selectedIds: new Set(initialSelectedIds),
 		judgeId: initialJudgeId,
@@ -29,41 +82,56 @@ export async function selectPanelAndJudge(
 
 	const result = await ctx.ui.custom<{ selectedIds: Set<string>; judgeId: string | undefined } | null>(
 		(tui, theme, _kb, done) => {
+			let query = "";
+			let searchFocused = true;
+
 			const container = new Container();
 			container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 			container.addChild(new Text(theme.fg("accent", theme.bold("Configure Fusion Panel"))));
-			container.addChild(new Text(theme.fg("dim", "Space toggles panel selection. Enter confirms.")));
-			container.addChild(new Text(theme.fg("dim", "1–8 models allowed for the panel.")));
 
-			function buildItems(): SelectItem[] {
-				return identifiers.map((id) => {
-					const isPanel = state.selectedIds.has(id);
-					const isJudge = state.judgeId === id;
-					let label = id;
-					const badges: string[] = [];
-					if (isPanel) badges.push("panel");
-					if (isJudge) badges.push("judge");
-					if (badges.length > 0) label += ` [${badges.join("+")}]`;
-					return {
-						value: id,
-						label,
-						description: isPanel ? "Press j to set as judge" : "Press space to add to panel",
-					};
-				});
+			const hint = new Text(
+				theme.fg("dim", "Tab/↑↓ moves to list. Space toggles panel, j sets judge, Enter confirms, Esc cancels."),
+			);
+			container.addChild(hint);
+
+			const searchInput = new Input();
+			searchInput.setValue(query);
+			searchInput.onSubmit = () => {
+				searchFocused = false;
+				listNeedsFocus = true;
+				tui.requestRender();
+			};
+			container.addChild(searchInput);
+
+			const handleSearchInput = (data: string) => {
+				const before = searchInput.getValue();
+				searchInput.handleInput(data);
+				const after = searchInput.getValue();
+				if (after !== before) {
+					query = after;
+					refreshList();
+				}
+			};
+
+			let listNeedsFocus = false;
+			const filteredModels = () => filterModels(models, query);
+			const allItems = () => makeItems(filteredModels(), state.selectedIds, state.judgeId);
+			const selectList = new SelectList(
+				allItems(),
+				Math.min(models.length, 10),
+				getSelectListTheme(),
+			);
+
+			function refreshList() {
+				const items = allItems();
+				(selectList as any).items = items;
+				(selectList as any).filteredItems = [...items];
+				(selectList as any).selectedIndex = 0;
+				selectList.invalidate();
+				tui.requestRender();
 			}
 
-			const selectList = new SelectList(buildItems(), Math.min(identifiers.length, 12), {
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			});
-
-			selectList.onSelect = () => {
-				const item = selectList.getSelectedItem();
-				const value = item?.value;
-				if (!value) return;
+			function togglePanel(value: string) {
 				if (state.selectedIds.has(value)) {
 					state.selectedIds.delete(value);
 					if (state.judgeId === value) state.judgeId = undefined;
@@ -72,44 +140,94 @@ export async function selectPanelAndJudge(
 					state.selectedIds.add(value);
 					if (!state.judgeId) state.judgeId = value;
 				}
-				selectList.setSelectedIndex(0);
-				tui.requestRender();
+				refreshList();
+			}
+
+			function setJudge(value: string) {
+				if (!state.selectedIds.has(value)) {
+					if (state.selectedIds.size >= 8) {
+						hint.setText(theme.fg("warning", "Panel is full. Remove a model before setting judge."));
+						tui.requestRender();
+						return;
+					}
+					state.selectedIds.add(value);
+				}
+				state.judgeId = value;
+				refreshList();
+			}
+
+			function confirm() {
+				if (state.selectedIds.size === 0) {
+					hint.setText(theme.fg("warning", "Select at least one panel model first."));
+					tui.requestRender();
+					return;
+				}
+				if (!state.judgeId || !state.selectedIds.has(state.judgeId)) {
+					state.judgeId = Array.from(state.selectedIds)[0];
+				}
+				done({ selectedIds: new Set(state.selectedIds), judgeId: state.judgeId });
+			}
+
+			selectList.onSelect = () => {
+				const item = selectList.getSelectedItem();
+				if (item?.value) togglePanel(item.value);
 			};
 
 			selectList.onCancel = () => done(null);
 
-			const originalHandleInput = (selectList as any).handleInput.bind(selectList);
-			(selectList as any).handleInput = (data: string) => {
-				if (data === "j") {
-					const item = selectList.getSelectedItem();
-					const value = item?.value;
-					if (value && state.selectedIds.has(value)) {
-						state.judgeId = value;
-						selectList.setSelectedIndex(0);
-						tui.requestRender();
-						return;
-					}
-				}
-				if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-					done({ selectedIds: new Set(state.selectedIds), judgeId: state.judgeId });
-					return;
-				}
-				originalHandleInput(data);
-			};
-
 			container.addChild(selectList);
-			container.addChild(new Text(theme.fg("dim", "space toggle • j set judge • enter confirm • esc cancel")));
+			container.addChild(
+				new Text(theme.fg("dim", "Search filters models • Space toggles • j sets judge • Enter confirms")),
+			);
 			container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
+			const originalListHandleInput = (selectList as any).handleInput.bind(selectList);
 			return {
 				render(width: number) {
+					if (listNeedsFocus) {
+						listNeedsFocus = false;
+						// Nothing explicit needed; focus follows input routing.
+					}
 					return container.render(width);
 				},
 				invalidate() {
 					container.invalidate();
 				},
 				handleInput(data: string) {
-					(selectList as any).handleInput(data);
+					if (matchesKey(data, Key.escape)) {
+						done(null);
+						return;
+					}
+
+					if (matchesKey(data, Key.tab)) {
+						searchFocused = !searchFocused;
+						return;
+					}
+
+					if (searchFocused) {
+						handleSearchInput(data);
+						return;
+					}
+
+					// List focused.
+					if (matchesKey(data, Key.space)) {
+						const selected = selectList.getSelectedItem();
+						if (selected) selectList.onSelect?.(selected);
+						return;
+					}
+
+					if (data === "j") {
+						const item = selectList.getSelectedItem();
+						if (item?.value) setJudge(item.value);
+						return;
+					}
+
+					if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+						confirm();
+						return;
+					}
+
+					originalListHandleInput(data);
 				},
 			};
 		},

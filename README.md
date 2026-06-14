@@ -104,7 +104,13 @@ answers from multiple perspectives.
 ### Slash commands
 
 - `/fusion <prompt>` — run fusion manually and prefill the result in the editor.
-- `/fusion-panel` — open an interactive model selector to choose the panel and judge for this session.
+- `/fusion-panel` — open an interactive, searchable model selector to choose the panel and judge for this session.
+  - **Search:** type to filter by provider, model id, or model name.
+  - **Space:** toggle the highlighted model into/out of the panel.
+  - **j:** set the highlighted model as the judge (auto-adds to panel if needed).
+  - **Tab:** switch focus between the search box and the filtered list.
+  - **Enter:** confirm your panel and judge.
+  - **Esc:** cancel without saving.
 - `/fusion-config` — validate the active config and show warnings/errors.
 - `/fusion-models` — list authed text models available for fusion.
 - `/fusion-init` — generate a project-local `.pi/fusion.json` template.
