@@ -1,0 +1,30 @@
+{
+  "name": "pi-fusion",
+  "version": "0.1.0",
+  "description": "Multi-model deliberation for pi, inspired by OpenRouter Fusion",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "fusion", "multi-model"],
+  "license": "MIT",
+  "scripts": {
+    "clean": "rm -rf node_modules",
+    "build": "echo 'pi-fusion is loaded directly by pi via jiti; no build step required'",
+    "check": "tsc --noEmit",
+    "test": "node --import jiti/register src/__tests__/utils.test.ts src/__tests__/config.test.ts src/__tests__/models.test.ts src/__tests__/format.test.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "jiti": "^2.4.0",
+    "typescript": "^5.5.0"
+  }
+}
