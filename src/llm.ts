@@ -20,25 +20,50 @@ export async function callModelText(
 		throw new Error(auth.ok ? `No API key for ${modelDisplay(model)}` : auth.error);
 	}
 
+	const options: {
+		apiKey: string;
+		headers?: Record<string, string>;
+		signal?: AbortSignal;
+		maxTokens: number;
+		temperature?: number;
+	} = {
+		apiKey: auth.apiKey,
+		headers: auth.headers,
+		signal,
+		maxTokens,
+	};
+
+	// Some models (e.g. Anthropic Claude Opus 4.7+, OpenAI Codex) reject temperature.
+	const supportsTemperature = getSupportsTemperature(model);
+	if (supportsTemperature) {
+		options.temperature = temperature;
+	}
+
 	const response = await complete(
 		model,
 		{
 			systemPrompt,
 			messages: [{ role: "user", content: userText, timestamp: Date.now() }],
 		},
-		{
-			apiKey: auth.apiKey,
-			headers: auth.headers,
-			signal,
-			maxTokens,
-			temperature,
-		},
+		options,
 	);
 
 	if (response.stopReason === "error" || response.stopReason === "aborted") {
 		throw new Error(response.errorMessage ?? `Model stopped with reason: ${response.stopReason}`);
 	}
 	return response;
+}
+
+function getSupportsTemperature(model: Model<Api>): boolean {
+	const compat = (model as any).compat;
+	if (compat && typeof compat.supportsTemperature === "boolean") {
+		return compat.supportsTemperature;
+	}
+	// Heuristic: OpenAI Codex models and Anthropic Opus 4.7+ commonly reject temperature.
+	const id = model.id.toLowerCase();
+	if (id.includes("codex")) return false;
+	if (model.provider === "anthropic" && /^claude-opus-4-[7-9]/.test(model.id)) return false;
+	return true;
 }
 
 export function getTextContent(message: AssistantMessage): string {

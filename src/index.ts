@@ -209,6 +209,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			const sessionState = restoreSessionState(ctx);
+			if (sessionState?.selectedIds.size) {
+				updateStatus(ctx, sessionState.selectedIds, sessionState.judgeId);
+			}
+
 			ctx.ui.setWorkingMessage("Running fusion panel...");
 			try {
 				const fusionResult = await runFusion(
