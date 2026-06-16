@@ -8,34 +8,42 @@ Multi-model deliberation for [pi](https://github.com/earendil-works), inspired b
 
 pi-fusion runs your prompt against a panel of the models you're already authed for, then has a judge model compare their answers and return structured analysis. Your active model uses that analysis to write a better, less-blind-spotted final answer. It works out of the box with no configuration.
 
+## Why use it
+
+- **Catch blind spots before they cost you.** A single model has consistent gaps; a panel of different models from different providers rarely shares the same ones. Fusion surfaces what *no* model addressed so you find out before you ship.
+- **Know what's high-confidence.** When several independent models agree, that consensus is worth more than one model's confident guess. Fusion flags it explicitly.
+- **See disagreement instead of averaging it away.** Where models contradict each other, you get each one's stance — the signal that a question is genuinely contested, not settled.
+- **Zero setup, on demand.** No config needed: fusion auto-selects a diverse set of your authed models and, by default, only runs when the active model decides a task is worth it — so normal prompts stay fast.
+
+Best for research, architecture trade-offs, critiques, and decisions where being wrong is expensive. Skip it for routine edits — and by default, it skips itself.
+
 ## What it does
 
 When the `fusion` tool runs, pi:
 
 1. Picks a panel of authed models (a diverse auto-selection by default, or your configured panel).
 2. Sends your prompt to every panel model in parallel.
-3. Sends all panel responses to a judge model.
-4. The judge returns structured analysis:
+3. Sends all panel responses to a judge model, which returns structured analysis:
    - **consensus** — points most models agree on (treat as higher-confidence)
    - **contradictions** — where models disagree, with each model's stance
    - **partial_coverage** — points only some models raised
    - **unique_insights** — ideas raised by a single model
    - **blind_spots** — topics no panel model addressed
-5. Your active model receives the analysis plus the raw responses and writes the final answer.
+4. Your active model receives the analysis plus the raw responses and writes the final answer.
 
 When two or more panel models answer, the judge synthesis runs. If only one model succeeds, the single response is returned directly (no synthesis).
 
 ## Install
 
 ```bash
-pi install npm:pi-fusion                          # from npm
+pi install npm:pi-fusion                            # from npm
 pi install git:github.com/synthetic-recon/pi-fusion # from GitHub
-pi install /path/to/pi-fusion                      # from a local checkout
+pi install /path/to/pi-fusion                       # from a local checkout
 ```
 
 After installing or updating in a running session, run `/reload`.
 
-There's no build step — pi loads the TypeScript directly via [jiti](https://github.com/unjs/jiti).
+There's no build step — pi loads the TypeScript directly via [jiti](https://github.com/unjs/jiti). Requires Node ≥ 22.19.0.
 
 ## Quick start
 
@@ -58,7 +66,7 @@ No setup is required: with no panel configured, fusion auto-selects a diverse se
 
 ### As a tool
 
-By default fusion is `available`, so the model can call it whenever a task genuinely benefits from multiple perspectives — research, critique, compare/contrast, architecture trade-offs, or decisions where being wrong is expensive. Just ask:
+By default fusion is `available`, so the model can call it whenever a task genuinely benefits from multiple perspectives. Just ask:
 
 ```
 Use fusion to evaluate whether we should migrate to the Next.js App Router.
@@ -85,11 +93,9 @@ Run a single prompt through fusion without changing the session mode:
 
 The active model calls fusion, then writes the final answer itself in its normal voice.
 
-### Context
+### Adding conversation context
 
-The **panel and judge are always your configuration** — set them with `/fusion-setup` (session) or
-`fusion.json`. The model invoking the tool cannot pick panel/judge models; if you've configured
-them, those are always used.
+The **panel and judge are always your configuration** — the model invoking the tool cannot pick them. Set them with `/fusion-setup` (session) or `fusion.json`.
 
 Panel and judge calls do **not** see the whole pi conversation thread. When prior context matters, either put the relevant details in the prompt, or ask fusion to include recent turns:
 
@@ -102,36 +108,6 @@ Panel and judge calls do **not** see the whole pi conversation thread. When prio
 ```
 
 `context_mode` defaults to `"none"`. `context_turns` is clamped to 1–10 (default 4). The judge sees the same context-expanded task the panel saw, plus the panel responses.
-
-### Commands
-
-| Command | What it does |
-|---------|--------------|
-| `/fusion-setup` | Choose the panel and judge in an interactive picker (interactive mode only). |
-| `/fusion on` \| `available` \| `off` | Set the session mode (aliases: `forced`, `auto`, `disable`). |
-| `/fusion` | With no argument, toggle between `available` and `forced`. |
-| `/fusion <prompt>` | Force fusion for a single prompt, then answer normally. |
-| `/fusion-status` | Show the current mode, panel, and judge. |
-| `/fusion-report <prompt>` | Run fusion directly and write the raw panel/judge diagnostic report into the editor. |
-| `/fusion-init` | Write a `.pi/fusion.json` template (confirms before overwriting; trusted projects only). |
-
-#### `/fusion-setup` controls
-
-The screen has two sections — **Models** and **Config** — shown with the live panel/judge
-selection at the top. **Tab** switches between sections.
-
-Models section:
-- **↑/↓** move through the list.
-- **p** toggles the highlighted model into/out of the **panel**.
-- **j** toggles the highlighted model as **judge** (independent of the panel — the judge can be any model, or left unset for auto).
-- **c** clears the panel selection.
-- **/** starts a search; type to filter, **Enter**/**Esc** to finish searching.
-
-Config section:
-- **↑/↓** move between settings; **Space** or **←/→** change a value.
-- Settings: **Panel tools** (`none` → `readonly` → `all`) and **Max tool calls** (`4`/`8`/`12`/`25`/`50`/`100`).
-
-**Enter** saves, **Esc** cancels (from either section).
 
 ## Configuration
 
@@ -171,39 +147,67 @@ Generate a project-local template with `/fusion-init`, or write one by hand:
 | `maxToolCalls` | 8 | Max tool-call steps per panel model when tools are on (1–100). |
 | `panelToolsConsent` | `false` | Pre-authorize mutating tools in non-interactive (`-p`) runs. |
 
-Precedence: panel/judge come from session selection (`/fusion-setup`) → `fusion.json` → auto-selection (the tool cannot set them). Per-call tool params (`panel_tools`, `max_tool_calls`) override session → `fusion.json` → default.
+**Precedence.** Panel/judge come from session selection (`/fusion-setup`) → `fusion.json` → auto-selection (the tool cannot set them). Per-call tool params (`panel_tools`, `max_tool_calls`) override session → `fusion.json` → default.
+
+**How models are resolved.** Reference models as `provider/id` (a bare `id` matches by exact id across providers). Only authed models are used — a configured model that isn't authed is skipped with a warning. With no panel configured, fusion auto-selects a diverse set spread across providers. The judge defaults to your current model, falling back to the first panel model.
 
 ### Panel tools (multi-turn)
 
-By default panel models answer in a single turn with no tools. Enable tools to let each panel
-model **gather evidence before answering** — read files, grep, search — across multiple internal
-turns (bounded by `maxToolCalls`), then return its answer. The judge stays tool-free.
+By default panel models answer in a single turn with no tools. Enable tools to let each panel model **gather evidence before answering** — read files, grep, search — across multiple internal turns (bounded by `maxToolCalls`), then return its answer. The judge stays tool-free.
 
 - **`readonly`** (`read`, `grep`, `find`, `ls`) — safe; no mutation.
-- **`all`** — adds `bash`, `edit`, `write`. It is **off by default** and requires consent
-  (the `/fusion-setup` picker prompts; non-interactive runs need `"panelToolsConsent": true`).
-  Because several models run concurrently, mutating runs **serialize the panel** (one model at a
-  time) so they can't clobber each other's writes. Without consent, `all` downgrades to read-only.
+- **`all`** — adds `bash`, `edit`, `write`. **Off by default** and requires consent (the `/fusion-setup` picker prompts; non-interactive runs need `"panelToolsConsent": true`). Because several models run concurrently, mutating runs **serialize the panel** so they can't clobber each other's writes. Without consent, `all` downgrades to read-only.
 
-Set tools interactively in `/fusion-setup` (Tab to the Config section, then Space/←→ to change), in
-`fusion.json`, or per call via the `panel_tools` / `max_tool_calls` tool parameters. The per-call
-`panel_tools` parameter accepts only the `none`/`readonly`/`all` modes — the explicit tool-name list
-is `fusion.json`-only. Tool output is truncated before re-entering the loop, and a cap/loop guard
-always forces a final text answer.
+Set tools in `/fusion-setup` (Config section), in `fusion.json`, or per call via `panel_tools` / `max_tool_calls`. The per-call `panel_tools` accepts only `none`/`readonly`/`all` — the explicit tool-name list is `fusion.json`-only.
 
-> Note: enabling panel tools means **file contents (and command output for `all`) are sent to every
-> panel model's provider**. Only enable it where that's acceptable.
+> **Note:** enabling panel tools means **file contents (and command output for `all`) are sent to every panel model's provider**. Only enable it where that's acceptable.
 
-## How models are resolved
+## FAQ
 
-- Reference models as `provider/id` (e.g. `anthropic/claude-sonnet-4-5`). A bare `id` matches by exact id across all providers.
-- Only authed models are used; a configured model that isn't authed is skipped with a warning.
-- With no panel configured, fusion auto-selects a diverse set (spreading across providers) from your authed models.
-- The judge defaults to your current model, falling back to the first panel model.
+**Does fusion run on every prompt?**
+No — by default the mode is `available`, so the active model only calls fusion when a task benefits from multiple perspectives. Routine prompts are untouched. Use `/fusion on` to force it on every prompt, or `/fusion off` to disable it for the session.
 
-## Session state
+**Does it cost more tokens / money?**
+Yes, when it runs. Each panel model is a separate completion, plus one judge call. That's the trade for catching blind spots on high-stakes questions — which is why it's opt-in per task by default. Tune cost with `maxPanelModels`, `maxPanelOutputTokens`, and `maxCompletionTokens`.
 
-`/fusion-setup` saves the selected panel and judge in the session, and `/fusion` saves the current mode (`available`, `forced`, or `off`). On `/resume`, the extension restores the last selection, mode, and footer state. Use `/fusion off` to fully disable and block fusion for the session.
+**Is my code or prompt sent to other providers?**
+The prompt goes to every panel model and the judge — all models you're already authed for. With **panel tools** enabled, file contents (and command output, for `all`) are also sent to every panel model's provider. Tools are off by default; only enable them where that data sharing is acceptable.
+
+**Why didn't fusion run when I asked?**
+In `available` mode the model decides. If you want a guaranteed run, use `/fusion <prompt>` for one prompt or `/fusion on` for the session. Forced mode also needs at least one usable panel model — check `/fusion-status`.
+
+**Why did I get one model's answer with no analysis?**
+The judge synthesis only runs when **two or more** panel models succeed. If a single model answers (others failed or weren't authed), its response is returned directly.
+
+**Which models get picked, and why was one skipped?**
+Only authed models are used. With no configured panel, fusion auto-selects a diverse set across providers. A configured model that isn't authed is skipped with a warning. See **How models are resolved** above, or run `/fusion-status` to see the active panel and judge.
+
+**Does it work in non-interactive (`-p`) runs?**
+Yes. `/fusion-setup` is interactive-only, so configure the panel/judge via `fusion.json` instead. To allow mutating panel tools without an interactive prompt, set `"panelToolsConsent": true`.
+
+**How do I see what the panel and judge actually said?**
+`/fusion-report <prompt>` runs fusion directly and writes the raw panel/judge diagnostic report into the editor.
+
+## Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/fusion-setup` | Choose the panel and judge in an interactive picker (interactive mode only). |
+| `/fusion on` \| `available` \| `off` | Set the session mode (aliases: `forced`, `auto`, `disable`). |
+| `/fusion` | With no argument, toggle between `available` and `forced`. |
+| `/fusion <prompt>` | Force fusion for a single prompt, then answer normally. |
+| `/fusion-status` | Show the current mode, panel, and judge. |
+| `/fusion-report <prompt>` | Run fusion directly and write the raw panel/judge diagnostic report into the editor. |
+| `/fusion-init` | Write a `.pi/fusion.json` template (confirms before overwriting; trusted projects only). |
+
+### `/fusion-setup` controls
+
+Two sections — **Models** and **Config** — with the live panel/judge selection shown at the top. **Tab** switches sections; **Enter** saves, **Esc** cancels.
+
+- **Models:** `↑/↓` move · `p` toggle panel · `j` toggle judge (independent of the panel; can be any model or left unset for auto) · `c` clear panel · `/` search.
+- **Config:** `↑/↓` move · `Space` / `←→` change a value. Settings: **Panel tools** (`none` → `readonly` → `all`) and **Max tool calls** (`4`/`8`/`12`/`25`/`50`/`100`).
+
+Selections (panel, judge, mode) are saved in the session and restored on `/resume`.
 
 ## Development
 
@@ -214,7 +218,11 @@ npm test       # runs every suite in src/__tests__/
 npm pack --dry-run
 ```
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the GitHub issue templates.
+There's no build step. Try the extension live with `pi -e .`, then `/reload` after edits.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and PR guidelines, [SECURITY.md](SECURITY.md) for reporting vulnerabilities, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and the GitHub issue templates.
 
 ## Differences from OpenRouter Fusion
 
