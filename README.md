@@ -4,7 +4,7 @@
 
 # pi-fusion
 
-Multi-model deliberation for [pi](https://github.com/earendil-works), inspired by OpenRouter Fusion.
+Multi-model deliberation for [pi](https://pi.dev/), inspired by [OpenRouter Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/).
 
 pi-fusion sends your prompt to several of the models you're already authed for, then has a judge model compare their answers. The judge's analysis (where the models agree, disagree, or each missed something) goes back to your active model, which writes the final answer. It needs no configuration to start.
 
