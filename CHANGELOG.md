@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- **Panel/judge are now always user configuration.** The `fusion` tool no longer exposes `analysis_models`/`model`/`judge_model` parameters, so the invoking model can't auto-pick (or override) your models. Panel/judge come from `/fusion-setup` → `fusion.json` → auto-selection. (Also removes spurious "model not authed" warnings caused by the model guessing models.)
+- The footer and `/fusion-status` now reflect a `fusion.json` panel/judge even without running `/fusion-setup`.
+- Redesigned `/fusion-setup`: rows show provider · model name · panel/judge badges (right column, no longer truncated); panel and judge are now **independent** toggles; a live list of selected panel models + judge shows at top; config (tools, max calls) moved to a Tab-navigable section; `/` search sub-mode.
+- `/fusion-init` now creates the `.pi/` directory if missing (fixes an ENOENT) and seeds the template from your **authed** models, so it works immediately without "model not authed" warnings.
+- Panel models can now run a bounded internal **tool loop** (multi-turn) before answering.
+- `panelTools` config / `panel_tools` tool param: `"none"` (default), `"readonly"` (read/grep/find/ls), `"all"` (adds bash/edit/write), or an explicit tool-name list.
+- `maxToolCalls` config / `max_tool_calls` tool param caps tool-call steps per panel model (1–100, default 8; `/fusion-setup` presets 4/8/12/25/50/100).
+- `all`/mutating tools are off by default, require consent, and serialize the panel; without consent they downgrade to read-only.
+- `/fusion-setup` config (panel tools, max calls) is a Tab-navigable section; the judge stays tool-free.
+
 ## 0.6.0
 
 - `/fusion` now offers argument autocompletion for `on` (alias for `forced`), `available`, and `off`.
