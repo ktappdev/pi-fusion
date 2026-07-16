@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+- Fixed GitHub Copilot `gpt-5.6-sol` requests failing with a 400 by omitting the unsupported `temperature` parameter for that exact provider/model pair. Other Copilot models and providers retain their existing temperature behavior.
+
 ## 0.8.0
 
 - Added reusable named panels in `fusion.json`, including a configurable default, independent panel/judge reasoning effort, one-shot `--panel` command selection, and profile-derived snapshots in `/fusion-setup`.
