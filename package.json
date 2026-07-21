@@ -6,12 +6,12 @@
   "main": "./src/index.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/synthetic-recon/pi-fusion.git"
+    "url": "git+https://github.com/ktappdev/pi-fusion.git"
   },
   "bugs": {
-    "url": "https://github.com/synthetic-recon/pi-fusion/issues"
+    "url": "https://github.com/ktappdev/pi-fusion/issues"
   },
-  "homepage": "https://github.com/synthetic-recon/pi-fusion#readme",
+  "homepage": "https://github.com/ktappdev/pi-fusion#readme",
   "keywords": ["pi-package", "pi-extension", "fusion", "multi-model", "coding-agent", "llm", "openrouter"],
   "license": "MIT",
   "engines": {
@@ -40,7 +40,7 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "image": "https://raw.githubusercontent.com/synthetic-recon/pi-fusion/main/assets/fusion.png"
+    "image": "https://raw.githubusercontent.com/ktappdev/pi-fusion/main/assets/fusion.png"
   },
   "dependencies": {},
   "peerDependencies": {

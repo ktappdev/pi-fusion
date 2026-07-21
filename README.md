@@ -2,7 +2,7 @@
   <img alt="NPM Downloads" src="https://img.shields.io/npm/dw/pi-fusion">
 </p>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/synthetic-recon/pi-fusion/main/assets/fusion.png" alt="pi-fusion" width="520">
+  <img src="https://raw.githubusercontent.com/ktappdev/pi-fusion/main/assets/fusion.png" alt="pi-fusion" width="520">
 </p>
 
 # pi-fusion
@@ -41,7 +41,7 @@ When two or more panel models answer, the judge synthesis runs. If only one mode
 
 ```bash
 pi install npm:pi-fusion                            # from npm
-pi install git:github.com/synthetic-recon/pi-fusion # from GitHub
+pi install git:github.com/ktappdev/pi-fusion # from GitHub
 pi install /path/to/pi-fusion                       # from a local checkout
 ```
 

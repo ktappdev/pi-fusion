@@ -5,7 +5,7 @@ Thanks for helping improve pi-fusion.
 ## Development setup
 
 ```bash
-git clone https://github.com/synthetic-recon/pi-fusion.git
+git clone https://github.com/ktappdev/pi-fusion.git
 cd pi-fusion
 npm install
 npm run check
