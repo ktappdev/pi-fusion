@@ -1,0 +1,25 @@
+{
+  "id": "coordinator",
+  "pid": 79360,
+  "cwd": "/Users/kentaylor/developer/pi-fusion",
+  "parent": null,
+  "role": "coordinator",
+  "sessionFile": "/Users/kentaylor/.pi/agent/sessions/--Users-kentaylor-developer-pi-fusion--/2026-07-21T16-02-02-379Z_019f8569-aa0b-75bc-b6f0-acf55327adc6.jsonl",
+  "state": "done",
+  "status": "stopped",
+  "holdReason": null,
+  "obligations": [],
+  "owed": [],
+  "barriers": [],
+  "startedAt": "2026-07-21T16:02:07.414Z",
+  "lastSeen": "2026-07-21T16:19:31.811Z",
+  "updatedAt": "2026-07-21T16:19:31.811Z",
+  "capabilities": [
+    "urgency",
+    "barriers",
+    "deliverAfter",
+    "expiresAt",
+    "journal",
+    "canary"
+  ]
+}

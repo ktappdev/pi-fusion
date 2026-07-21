@@ -8,8 +8,8 @@
  * answer.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { type AutocompleteItem, Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ import { modelDisplay } from "./models.ts";
 import { clampMaxToolCalls, isMutatingSelection, selectionLabel } from "./tools.ts";
 import { selectFusionSetup, type FusionMode, type FusionSetupProfile, type FusionSetupState } from "./ui.ts";
 import { formatResult } from "./format.ts";
-import type { FooterDisplay, FusionOptions, ThinkingLevel, ToolMode } from "./types.ts";
+import type { FusionDetails, FooterDisplay, FusionOptions, ThinkingLevel, ToolMode } from "./types.ts";
 const FusionParams = Type.Object(
 	{
 		prompt: Type.String({
@@ -448,6 +448,37 @@ export default function (pi: ExtensionAPI) {
 				signal,
 				onUpdate,
 			);
+		},
+		// Render the fusion result as a clean markdown report instead of the raw JSON
+		// blob that lives in `content` (the model still reads `content` for synthesis).
+		// Reuses formatResult — the same renderer /fusion-report writes to the editor.
+		renderResult(result, { isPartial }, theme: Theme) {
+			if (isPartial) {
+				return new Text(theme.fg("dim", "Fusion running…"), 0, 0);
+			}
+			const d = result.details as FusionDetails;
+			if (d.status === "error") {
+				return new Text(theme.fg("error", `Fusion failed: ${d.error ?? "unknown error"}`), 0, 0);
+			}
+			const failed = (d.failed_models ?? []).map((f) => ({
+				model: f.model,
+				provider: f.model.split("/")[0] ?? "",
+				id: f.model.split("/").slice(1).join("/"),
+				content: "",
+				error: f.error,
+			}));
+			const responses = d.responses.map((r) => ({
+				model: r.model,
+				provider: r.model.split("/")[0] ?? "",
+				id: r.model.split("/").slice(1).join("/"),
+				content: r.content,
+			}));
+			const report = formatResult(d.analysis, responses, failed, {
+				...d,
+				panel_models: d.panel_models ?? [],
+				judge_model: d.judge_model ?? "unknown",
+			});
+			return new Markdown(report, 0, 0, getMarkdownTheme());
 		},
 	});
 

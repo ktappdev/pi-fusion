@@ -1,0 +1,12 @@
+{
+  "builder": "commandcode/xiaomi/mimo-v2.5-pro",
+  "reviewer": "mimo/mimo-v2.5-pro",
+  "tester": "mimo/mimo-v2.5",
+  "designer": "mimo/mimo-v2.5-pro",
+  "bug-hunter": "commandcode/deepseek/deepseek-v4-pro",
+  "scout": "ocg1/deepseek-v4-flash",
+  "default": "commandcode/deepseek/deepseek-v4-pro",
+  "journal": "ocg1/deepseek-v4-flash",
+  "journal-cadence": "done",
+  "planner": "commandcode/deepseek/deepseek-v4-pro"
+}
