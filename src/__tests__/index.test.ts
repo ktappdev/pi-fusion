@@ -8,9 +8,12 @@ import registerFusionExtension, {
 	fusionFooterText,
 	normalizeFooterDisplay,
 	parsePanelCommand,
+	serializeSetupToConfig,
 } from "../index.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PendingPanelSelection } from "../index.ts";
+import type { FusionConfig } from "../config.ts";
+import type { FusionSetupState } from "../ui.ts";
 
 test("normalizeFooterDisplay accepts known footer modes", () => {
 	eq(normalizeFooterDisplay("full"), "full", "full is accepted");
@@ -253,4 +256,43 @@ test("buildInitialState restores reasoning as a custom session snapshot", () => 
 	eq(state.profileName, undefined, "saved session is treated as a detached custom snapshot");
 	eq(state.panelReasoning, "high", "panel effort restored");
 	eq(state.judgeReasoning, "xhigh", "judge effort restored");
+});
+
+test("serializeSetupToConfig writes selection as panels.default and preserves other panels", () => {
+	const state: FusionSetupState = {
+		selectedIds: new Set(["openai/gpt-5.5", "anthropic/claude-sonnet-5"]),
+		judgeId: "anthropic/claude-opus-4-5",
+		panelReasoning: "high",
+		judgeReasoning: "xhigh",
+		panelTools: "readonly",
+		maxToolCalls: 16,
+		footerDisplay: "full",
+	};
+	const existing: FusionConfig = {
+		panels: { fast: { models: ["openai/gpt-5.5-mini"] } },
+		maxPanelOutputTokens: 4096,
+	};
+	const out = serializeSetupToConfig(state, existing);
+	eq(out.defaultPanel, "default", "default panel set");
+	eq(out.panels?.fast?.models, ["openai/gpt-5.5-mini"], "other named panel preserved");
+	eq(out.panels?.default?.models, ["openai/gpt-5.5", "anthropic/claude-sonnet-5"], "default panel models");
+	eq(out.panels?.default?.judge, "anthropic/claude-opus-4-5", "default panel judge");
+	eq(out.panels?.default?.panelReasoning, "high", "default panel reasoning");
+	eq(out.panels?.default?.judgeReasoning, "xhigh", "default judge reasoning");
+	eq(out.panelTools, "readonly", "shared panelTools carried");
+	eq(out.maxPanelOutputTokens, 4096, "existing shared knobs preserved");
+});
+
+test("serializeSetupToConfig omits judge when unset and carries only set knobs", () => {
+	const state: FusionSetupState = {
+		selectedIds: new Set(["openai/gpt-5.5"]),
+		judgeId: undefined,
+		panelTools: undefined,
+		maxToolCalls: undefined,
+		footerDisplay: undefined,
+	};
+	const out = serializeSetupToConfig(state, {});
+	eq(out.panels?.default?.models, ["openai/gpt-5.5"], "models written");
+	eq("judge" in (out.panels?.default ?? {}), false, "judge omitted when unset");
+	eq("panelTools" in out, false, "panelTools omitted when unset");
 });

@@ -8,7 +8,7 @@
  * answer.
  */
 
-import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir, getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { type AutocompleteItem, Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -24,7 +24,7 @@ import { buildRecentContextFromEntries, type FusionContextMode, normalizeContext
 import { resolveFusionModels, resolveFusionSelection, runFusion } from "./fusion.ts";
 import { modelDisplay } from "./models.ts";
 import { clampMaxToolCalls, isMutatingSelection, selectionLabel } from "./tools.ts";
-import { selectFusionSetup, type FusionMode, type FusionSetupProfile, type FusionSetupState } from "./ui.ts";
+import { selectFusionSetup, type FusionMode, type FusionSetupProfile, type FusionSetupState, type FusionSaveTarget } from "./ui.ts";
 import { formatResult } from "./format.ts";
 import type { FusionDetails, FooterDisplay, FusionOptions, ThinkingLevel, ToolMode } from "./types.ts";
 const FusionParams = Type.Object(
@@ -192,7 +192,7 @@ function persistSessionState(
 	selectedIds: Set<string>,
 	judgeId: string | undefined,
 	mode: FusionMode = "available",
-	settings: Pick<FusionSetupState, "panelTools" | "maxToolCalls" | "toolsConsented" | "footerDisplay" | "panelReasoning" | "judgeReasoning"> = {},
+	settings: Pick<FusionSetupState, "panelTools" | "maxToolCalls" | "toolsConsented" | "footerDisplay" | "panelReasoning" | "judgeReasoning" | "saveTarget"> = {},
 ) {
 	pi.appendEntry("fusion-state", {
 		selectedIds: Array.from(selectedIds),
@@ -205,6 +205,7 @@ function persistSessionState(
 		footerDisplay: settings.footerDisplay,
 		panelReasoning: settings.panelReasoning,
 		judgeReasoning: settings.judgeReasoning,
+		saveTarget: settings.saveTarget,
 		timestamp: Date.now(),
 	});
 }
@@ -225,6 +226,7 @@ function restoreSessionState(ctx: ExtensionContext): FusionSetupState | undefine
 				footerDisplay?: FooterDisplay;
 				panelReasoning?: ThinkingLevel;
 				judgeReasoning?: ThinkingLevel;
+				saveTarget?: FusionSaveTarget;
 			};
 			const mode = normalizeMode(data);
 			return {
@@ -240,6 +242,7 @@ function restoreSessionState(ctx: ExtensionContext): FusionSetupState | undefine
 					: normalizeFooterDisplay(data.footerDisplay),
 				panelReasoning: data.panelReasoning,
 				judgeReasoning: data.judgeReasoning,
+				saveTarget: data.saveTarget,
 			};
 		}
 	}
@@ -337,10 +340,67 @@ export function buildInitialState(
 		maxToolCalls: sessionState?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
 		toolsConsented: sessionState?.toolsConsented ?? false,
 		footerDisplay: sessionState?.footerDisplay ?? normalizeFooterDisplay(configFooterDisplay),
+		saveTarget: sessionState?.saveTarget ?? "session",
 	};
 }
 
 type ModelWithDisplay = { display: string };
+
+/** Resolve where a non-session save writes its fusion.json. */
+function fusionConfigPath(ctx: ExtensionContext, target: Exclude<FusionSaveTarget, "session">): string {
+	if (target === "project") return join(ctx.cwd, ".pi", "fusion.json");
+	return join(getAgentDir(), "fusion.json");
+}
+
+/** Serialize a setup state into a FusionConfig, merging any existing config to preserve
+ *  other named panels and shared knobs. The saved selection becomes `panels.default`
+ *  and the active `defaultPanel`, matching the /fusion-init template shape. */
+export function serializeSetupToConfig(state: FusionSetupState, existing: FusionConfig): FusionConfig {
+	const base: FusionConfig = { ...existing };
+	const panels = { ...(base.panels ?? {}) };
+	panels.default = {
+		models: Array.from(state.selectedIds),
+		...(state.judgeId ? { judge: state.judgeId } : {}),
+		...(state.panelReasoning ? { panelReasoning: state.panelReasoning } : {}),
+		...(state.judgeReasoning ? { judgeReasoning: state.judgeReasoning } : {}),
+	};
+	base.panels = panels;
+	base.defaultPanel = "default";
+	if (state.panelTools !== undefined) base.panelTools = state.panelTools;
+	if (state.maxToolCalls !== undefined) base.maxToolCalls = state.maxToolCalls;
+	if (state.footerDisplay !== undefined) base.footerDisplay = state.footerDisplay;
+	return base;
+}
+
+/** Write the setup selection to a fusion.json file (global or project), with overwrite confirm. */
+async function writeSetupToConfig(
+	ctx: ExtensionContext,
+	state: FusionSetupState,
+	target: Exclude<FusionSaveTarget, "session">,
+): Promise<string | undefined> {
+	if (target === "project" && !ctx.isProjectTrusted()) {
+		return "Project is not trusted; cannot write project-local config. Save target reset to session.";
+	}
+	const configPath = fusionConfigPath(ctx, target);
+	const existing = existsSync(configPath) ? loadConfig(ctx.cwd, ctx.isProjectTrusted()) : {};
+	if (target === "project" && existsSync(configPath)) {
+		const ok = await ctx.ui.confirm(
+			".pi/fusion.json already exists",
+			`Overwrite ${configPath} with this panel? Other named panels and shared knobs are preserved.`,
+		);
+		if (!ok) return "Save cancelled; selection saved to this session only.";
+	} else if (target === "global" && existsSync(configPath)) {
+		const ok = await ctx.ui.confirm(
+			"~/.pi/agent/fusion.json already exists",
+			`Overwrite ${configPath} with this panel? Other named panels and shared knobs are preserved.`,
+		);
+		if (!ok) return "Save cancelled; selection saved to this session only.";
+	}
+	const merged = serializeSetupToConfig(state, existing);
+	mkdirSync(join(configPath, ".."), { recursive: true });
+	writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+	return undefined;
+}
 
 async function applySetup(
 	pi: ExtensionAPI,
@@ -373,6 +433,22 @@ async function applySetup(
 	const mode = normalizeMode(state);
 	persistSessionState(pi, state.selectedIds, state.judgeId, mode, state);
 	updateStatus(ctx, state.selectedIds, state.judgeId, mode);
+
+	// Non-session save targets write a fusion.json (global or project) so the selection
+	// survives new sessions. Session state is always persisted too, so the current
+	// session is immediately consistent with the written file.
+	const target = state.saveTarget ?? "session";
+	if (target !== "session") {
+		const writeError = await writeSetupToConfig(ctx, state, target);
+		if (writeError) {
+			warnings.push(writeError);
+			state.saveTarget = "session";
+			persistSessionState(pi, state.selectedIds, state.judgeId, mode, state);
+		} else {
+			warnings.push(`Saved to ${target === "project" ? ".pi/fusion.json" : "~/.pi/agent/fusion.json"}.`);
+		}
+	}
+
 	const panelNames = Array.from(state.selectedIds).join(", ");
 	const profileNote = state.profileName ? `\nNamed panel: ${state.profileName}` : "";
 	const reasoningNote = `\nPanel reasoning: ${state.panelReasoning ?? "off"}\nJudge reasoning: ${state.judgeReasoning ?? "off"}`;

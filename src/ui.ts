@@ -23,6 +23,7 @@ import type { Api, FooterDisplay, Model, ThinkingLevel, ToolMode } from "./types
 
 const TOOL_MODE_CYCLE: ToolMode[] = ["none", "readonly", "all"];
 const FOOTER_DISPLAY_CYCLE: FooterDisplay[] = ["full", "compact", "off"];
+const SAVE_TARGET_CYCLE: FusionSaveTarget[] = ["session", "global", "project"];
 const MAX_CALLS_PRESETS = [4, 8, 12, 16, 25, 50, 100];
 const REASONING_CYCLE = ["default", ...THINKING_LEVELS] as const;
 
@@ -33,6 +34,9 @@ interface ModelInfo {
 }
 
 export type FusionMode = "available" | "forced" | "off";
+
+/** Where /fusion-setup writes its selection on save. */
+export type FusionSaveTarget = "session" | "global" | "project";
 
 export interface FusionSetupProfile {
 	selectedIds: string[];
@@ -61,6 +65,8 @@ export interface FusionSetupState {
 	toolsConsented?: boolean;
 	/** Fusion status verbosity for this session. */
 	footerDisplay?: FooterDisplay;
+	/** Where the next /fusion-setup save writes: session (default), global, or project. */
+	saveTarget?: FusionSaveTarget;
 }
 
 /** Copy a configured named panel into detached session/setup state. */
@@ -170,6 +176,7 @@ export async function selectFusionSetup(
 		maxToolCalls: clampMaxToolCalls(initial.maxToolCalls),
 		toolsConsented: initial.toolsConsented ?? false,
 		footerDisplay: initial.footerDisplay ?? "full",
+		saveTarget: initial.saveTarget ?? "session",
 	};
 
 	interface ConfigRow {
@@ -251,6 +258,20 @@ export async function selectFusionSetup(
 					: state.footerDisplay === "compact"
 						? "show only fusion mode and panel count"
 						: "show fusion mode, panel, judge, and tools",
+		},
+		{
+			label: "Save to",
+			values: SAVE_TARGET_CYCLE,
+			get: () => state.saveTarget ?? "session",
+			set: (v) => {
+				state.saveTarget = v as FusionSaveTarget;
+			},
+			note: () =>
+				state.saveTarget === "project"
+					? "write .pi/fusion.json in this project (trusted projects only) — survives new sessions"
+					: state.saveTarget === "global"
+						? "write ~/.pi/agent/fusion.json — applies to every project"
+						: "save to this session only (restored on /resume, lost on /new)",
 		},
 	);
 
@@ -393,6 +414,7 @@ export async function selectFusionSetup(
 				maxToolCalls: state.maxToolCalls,
 				toolsConsented: state.toolsConsented,
 				footerDisplay: state.footerDisplay,
+				saveTarget: state.saveTarget,
 			});
 		}
 
